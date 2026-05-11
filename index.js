@@ -5,6 +5,9 @@ const PORT = process.env.PORT || 3000;
 const ML_CLIENT_ID = process.env.ML_CLIENT_ID;
 const ML_SECRET = process.env.ML_SECRET;
 
+// Token de usuario OAuth (se puede setear via variable de entorno)
+let USER_TOKEN = process.env.ML_USER_TOKEN || null;
+
 app.use(function(req, res, next) {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
@@ -12,6 +15,8 @@ app.use(function(req, res, next) {
 });
 
 async function getToken() {
+  // Si hay token de usuario, usarlo
+  if (USER_TOKEN) return USER_TOKEN;
   const r = await fetch('https://api.mercadolibre.com/oauth/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -59,6 +64,28 @@ async function buscarEnZona(token, marca, modelo, anio, zona) {
   return [];
 }
 
+// Obtener token OAuth con authorization_code
+app.get('/obtener-token', async function(req, res) {
+  const code = req.query.code;
+  if (!code) return res.status(400).json({ error: 'Falta el code' });
+  try {
+    const r = await fetch('https://api.mercadolibre.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'grant_type=authorization_code&client_id=' + ML_CLIENT_ID + '&client_secret=' + ML_SECRET + '&code=' + code + '&redirect_uri=https://www.google.com'
+    });
+    const d = await r.json();
+    // Si el token es valido, guardarlo en memoria
+    if (d.access_token) {
+      USER_TOKEN = d.access_token;
+      console.log('Token de usuario guardado correctamente');
+    }
+    res.json(d);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/test', async function(req, res) {
   try {
     const token = await getToken();
@@ -68,8 +95,9 @@ app.get('/test', async function(req, res) {
     const d = await r.json();
     res.json({
       token_ok: !!token,
+      user_token_activo: !!USER_TOKEN,
       total_results: d.paging ? d.paging.total : 0,
-      primer_resultado: d.results && d.results[0] ? { titulo: d.results[0].title, precio: d.results[0].price, estado: d.results[0].address } : null,
+      primer_resultado: d.results && d.results[0] ? { titulo: d.results[0].title, precio: d.results[0].price } : null,
       error: d.error || null
     });
   } catch(e) {
@@ -103,14 +131,14 @@ app.get('/buscar', async function(req, res) {
     });
     const todas = resultados.reduce(function(acc, arr) { return acc.concat(arr); }, []);
     console.log('Busqueda:', marca, modelo, anio, '- Total:', todas.length);
-    res.json({ estadisticas, publicaciones: todas });
+    res.json({ estadisticas: estadisticas, publicaciones: todas });
   } catch(err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 app.get('/', function(req, res) {
-  res.json({ status: 'ok', servicio: 'Nissan ML Server v2' });
+  res.json({ status: 'ok', servicio: 'Nissan ML Server v3', user_token_activo: !!USER_TOKEN });
 });
 
 app.listen(PORT, function() {
